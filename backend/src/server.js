@@ -8,15 +8,14 @@ import mongoose from "mongoose"
 import { errorHandler, notFound } from "./utils/errors.js"
 import productsRouter from "./routes/products.js"
 import authRouter from "./routes/auth.js"
-import ordersRouter from "./routes/orders.js"
+import ordersRouter from "./routes/order.js"
 
 dotenv.config()
 
 const app = express()
 
 // --- DB ---
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/mini_storefront"
-await mongoose.connect(MONGO_URI)
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://demo:demo123@cluster0.mongodb.net/mini_storefront?retryWrites=true&w=majority"
 
 // --- Middlewares ---
 app.use(express.json())
@@ -33,7 +32,7 @@ app.use("/api/auth", authRouter)
 app.use("/api/orders", ordersRouter)
 
 // Dev-only seed route
-import seedRouter from "./seed/devRoute.js"
+import seedRouter from "./seed/devRoutes.js"
 if (process.env.NODE_ENV !== "production") {
   app.use("/api/dev", seedRouter)
 }
@@ -43,4 +42,21 @@ app.use(notFound)
 app.use(errorHandler)
 
 const PORT = process.env.PORT || 4000
-app.listen(PORT, () => console.log(`API listening on :${PORT}`))
+
+// Start server
+async function startServer() {
+  try {
+    await mongoose.connect(MONGO_URI)
+    console.log('✅ Connected to MongoDB')
+    
+    app.listen(PORT, () => {
+      console.log(`🚀 API listening on :${PORT}`)
+      console.log(`📊 Health check: http://localhost:${PORT}/api/health`)
+    })
+  } catch (error) {
+    console.error('❌ Failed to start server:', error.message)
+    process.exit(1)
+  }
+}
+
+startServer()

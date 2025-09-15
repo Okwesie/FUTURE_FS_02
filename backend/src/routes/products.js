@@ -1,108 +1,82 @@
 import { Router } from "express"
 import { z } from "zod"
 import Product from "../models/Product.js"
-import Order from "../models/Order.js"
-import { authRequired } from "../middleware/auth.js"
 
 const router = Router()
 
-// Validation schema for checkout
-const checkoutSchema = z.object({
-  items: z.array(
-    z.object({
-      productId: z.string(),
-      qty: z.number().int().positive(),
-    }),
-  ),
-  shipping: z.object({
-    fullName: z.string().min(2),
-    address: z.string().min(3),
-    city: z.string().min(2),
-    country: z.string().min(2),
-    phone: z.string().min(6),
-  }),
-  payment: z.object({ method: z.enum(["card", "cash"]).default("card") }),
-  clientTotal: z.number().positive(),
+// Validation schema for product queries
+const productQuerySchema = z.object({
+  search: z.string().optional(),
+  category: z.string().optional(),
+  minPrice: z.coerce.number().min(0).optional(),
+  maxPrice: z.coerce.number().min(0).optional(),
+  sort: z.enum(["name", "price", "rating", "createdAt"]).default("createdAt"),
+  order: z.enum(["asc", "desc"]).default("desc"),
+  page: z.coerce.number().min(1).default(1),
+  limit: z.coerce.number().min(1).max(100).default(12),
 })
 
-// POST /api/orders/checkout  (auth required)
-router.post("/checkout", authRequired, async (req, res, next) => {
+// GET /api/products - List products with filtering, searching, and pagination
+router.get("/", async (req, res, next) => {
   try {
-    const payload = checkoutSchema.parse(req.body)
-
-    // Load products and verify stock
-    const productIds = payload.items.map((i) => i.productId)
-    const products = await Product.find({ _id: { $in: productIds } })
-
-    if (products.length !== payload.items.length) {
-      return res.status(400).json({ ok: false, error: { message: "Some products not found" } })
+    const query = productQuerySchema.parse(req.query)
+    
+    // Build filter object
+    const filter = {}
+    
+    // Search filter
+    if (query.search) {
+      filter.name = { $regex: query.search, $options: "i" }
     }
-
-    // Map for quick lookup
-    const map = Object.fromEntries(products.map((p) => [String(p._id), p]))
-
-    // Compute totals & check stock
-    let subtotal = 0
-    for (const item of payload.items) {
-      const p = map[item.productId]
-      if (!p || p.stock < item.qty) {
-        return res
-          .status(400)
-          .json({ ok: false, error: { message: `Insufficient stock for ${p?.name || item.productId}` } })
+    
+    // Category filter
+    if (query.category && query.category !== "All") {
+      filter.category = query.category
+    }
+    
+    // Price range filter
+    if (query.minPrice !== undefined || query.maxPrice !== undefined) {
+      filter.price = {}
+      if (query.minPrice !== undefined) {
+        filter.price.$gte = query.minPrice
       }
-      subtotal += p.price * item.qty
-    }
-
-    const taxRate = 0.07 // 7% demo
-    const shippingFlat = subtotal > 100 ? 0 : 6.99
-    const tax = Number((subtotal * taxRate).toFixed(2))
-    const grandTotal = Number((subtotal + tax + shippingFlat).toFixed(2))
-
-    // Compare with clientTotal (allow 1 cent diff due to rounding)
-    if (Math.abs(grandTotal - payload.clientTotal) > 0.01) {
-      return res.status(400).json({ ok: false, error: { message: "Total mismatch. Refresh cart and try again." } })
-    }
-
-    // Decrement stock atomically within a session
-    const session = await Product.startSession()
-    session.startTransaction()
-    try {
-      for (const item of payload.items) {
-        const p = map[item.productId]
-        p.stock -= item.qty
-        await p.save({ session })
+      if (query.maxPrice !== undefined) {
+        filter.price.$lte = query.maxPrice
       }
-
-      const orderItems = payload.items.map((i) => ({
-        productId: map[i.productId]._id,
-        name: map[i.productId].name,
-        price: map[i.productId].price,
-        qty: i.qty,
-      }))
-
-      const order = await Order.create(
-        [
-          {
-            userId: req.user.id,
-            items: orderItems,
-            totals: { subtotal, tax, shipping: shippingFlat, grandTotal, currency: "USD" },
-            shipping: payload.shipping,
-            payment: { method: payload.payment.method, status: "paid", reference: `SIM-${Date.now()}` },
-            status: "paid",
-          },
-        ],
-        { session },
-      )
-
-      await session.commitTransaction()
-      session.endSession()
-
-      res.status(201).json({ ok: true, data: order[0] })
-    } catch (e) {
-      await session.abortTransaction()
-      session.endSession()
-      throw e
     }
+    
+    // Build sort object
+    const sort = {}
+    sort[query.sort] = query.order === "asc" ? 1 : -1
+    
+    // Calculate pagination
+    const skip = (query.page - 1) * query.limit
+    
+    // Execute query with pagination
+    const [products, total] = await Promise.all([
+      Product.find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(query.limit)
+        .lean(),
+      Product.countDocuments(filter)
+    ])
+    
+    // Calculate pagination info
+    const pages = Math.ceil(total / query.limit)
+    
+    res.json({
+      ok: true,
+      data: {
+        items: products,
+        total,
+        page: query.page,
+        pages,
+        limit: query.limit,
+        hasNext: query.page < pages,
+        hasPrev: query.page > 1,
+      }
+    })
   } catch (err) {
     if (err instanceof z.ZodError) {
       res.status(400)
@@ -112,22 +86,35 @@ router.post("/checkout", authRequired, async (req, res, next) => {
   }
 })
 
-// GET /api/orders (auth) -> list current user's orders
-router.get("/", authRequired, async (req, res, next) => {
+// GET /api/products/categories - Get all available categories
+router.get("/categories", async (req, res, next) => {
   try {
-    const orders = await Order.find({ userId: req.user.id }).sort({ createdAt: -1 })
-    res.json({ ok: true, data: orders })
+    const categories = await Product.distinct("category")
+    res.json({
+      ok: true,
+      data: categories.sort()
+    })
   } catch (err) {
     next(err)
   }
 })
 
-// GET /api/orders/:id (auth)
-router.get("/:id", authRequired, async (req, res, next) => {
+// GET /api/products/:id - Get single product by ID
+router.get("/:id", async (req, res, next) => {
   try {
-    const order = await Order.findOne({ _id: req.params.id, userId: req.user.id })
-    if (!order) return res.status(404).json({ ok: false, error: { message: "Order not found" } })
-    res.json({ ok: true, data: order })
+    const product = await Product.findById(req.params.id).lean()
+    
+    if (!product) {
+      return res.status(404).json({
+        ok: false,
+        error: { message: "Product not found" }
+      })
+    }
+    
+    res.json({
+      ok: true,
+      data: product
+    })
   } catch (err) {
     next(err)
   }

@@ -4,7 +4,7 @@ import Product from "../models/Product.js"
 
 dotenv.config()
 
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/mini_storefront"
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://demo:demo123@cluster0.mongodb.net/mini_storefront?retryWrites=true&w=majority"
 
 const MOCK_PRODUCTS = [
   {
@@ -14,6 +14,7 @@ const MOCK_PRODUCTS = [
     rating: 4.7,
     stock: 24,
     img: "https://images.unsplash.com/photo-1541963463532-d68292c34b19?q=80&w=800",
+    description: "A comprehensive guide to focused work in an age of distraction. Learn how to develop deep work habits and achieve peak productivity.",
   },
   {
     name: "Clean Code",
@@ -22,6 +23,7 @@ const MOCK_PRODUCTS = [
     rating: 4.8,
     stock: 18,
     img: "https://images.unsplash.com/photo-1524578271613-d550eacf6090?q=80&w=800",
+    description: "A handbook of agile software craftsmanship. Learn to write clean, maintainable code that other developers will love to work with.",
   },
   {
     name: "Wireless Headphones",
@@ -30,6 +32,7 @@ const MOCK_PRODUCTS = [
     rating: 4.5,
     stock: 32,
     img: "https://images.unsplash.com/photo-1518441902110-266b0bff0c1a?q=80&w=800",
+    description: "Premium wireless headphones with noise cancellation, 30-hour battery life, and crystal-clear sound quality.",
   },
   {
     name: "Mechanical Keyboard",
@@ -38,6 +41,7 @@ const MOCK_PRODUCTS = [
     rating: 4.6,
     stock: 12,
     img: "https://images.unsplash.com/photo-1545235617-9465d2a55698?q=80&w=800",
+    description: "Professional mechanical keyboard with RGB backlighting, tactile switches, and programmable keys for the ultimate typing experience.",
   },
   {
     name: "Minimalist Tee",
@@ -46,6 +50,7 @@ const MOCK_PRODUCTS = [
     rating: 4.2,
     stock: 40,
     img: "https://images.unsplash.com/photo-1503342394128-c104d54dba01?q=80&w=800",
+    description: "Soft, comfortable cotton t-shirt with a minimalist design. Perfect for everyday wear and layering.",
   },
   {
     name: "Comfy Hoodie",
@@ -54,6 +59,7 @@ const MOCK_PRODUCTS = [
     rating: 4.4,
     stock: 17,
     img: "https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?q=80&w=800",
+    description: "Cozy fleece hoodie with a relaxed fit. Features a kangaroo pocket and adjustable drawstring hood for ultimate comfort.",
   },
   {
     name: "Ceramic Mug",
@@ -62,6 +68,7 @@ const MOCK_PRODUCTS = [
     rating: 4.3,
     stock: 50,
     img: "https://images.unsplash.com/photo-1473181488821-2d23949a045a?q=80&w=800",
+    description: "Handcrafted ceramic mug with a beautiful glaze finish. Perfect for your morning coffee or evening tea.",
   },
   {
     name: "Scented Candle",
@@ -70,6 +77,7 @@ const MOCK_PRODUCTS = [
     rating: 4.6,
     stock: 25,
     img: "https://images.unsplash.com/photo-1504197885-609741792ce7?q=80&w=800",
+    description: "Luxury scented candle with a warm vanilla fragrance. Made with natural soy wax and cotton wick for clean burning.",
   },
   {
     name: "Vitamin C Serum",
@@ -78,6 +86,7 @@ const MOCK_PRODUCTS = [
     rating: 4.4,
     stock: 30,
     img: "https://images.unsplash.com/photo-1611930022073-b7a4ba5fcccd?q=80&w=800",
+    description: "Brightening vitamin C serum that helps reduce dark spots and improve skin texture. Suitable for all skin types.",
   },
   {
     name: "Face Moisturizer",
@@ -86,15 +95,14 @@ const MOCK_PRODUCTS = [
     rating: 4.2,
     stock: 28,
     img: "https://images.unsplash.com/photo-1585238342028-4bbc1a0e3b51?q=80&w=800",
+    description: "Hydrating face moisturizer with hyaluronic acid. Provides 24-hour moisture and helps maintain skin's natural barrier.",
   },
 ]
 
 async function run() {
   await mongoose.connect(MONGO_URI)
   await Product.deleteMany({})
-  const inserted = await Product.insertMany(
-    MOCK_PRODUCTS.map((p) => ({ ...p, description: `${p.name} – awesome product.` })),
-  )
+  const inserted = await Product.insertMany(MOCK_PRODUCTS)
   console.log(`Seeded ${inserted.length} products.`)
   await mongoose.disconnect()
 }
