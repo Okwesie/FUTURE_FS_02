@@ -96,7 +96,7 @@ export function CheckoutForm({ disabled = false }: CheckoutFormProps) {
       // Prepare checkout data
       const checkoutData = {
         items: items.map((item) => ({
-          productId: item.product._id,
+          productId: item.product.id,
           qty: item.quantity,
         })),
         shipping,
@@ -127,7 +127,7 @@ export function CheckoutForm({ disabled = false }: CheckoutFormProps) {
       })
 
       // Redirect to order success page with order ID
-      router.push(`/checkout/success?orderId=${data.data._id}`)
+      router.push(`/checkout/success?orderId=${data.data.id}`)
     } catch (error) {
       toast({
         title: "Checkout failed",

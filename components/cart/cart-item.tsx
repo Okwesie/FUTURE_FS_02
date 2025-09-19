@@ -8,7 +8,7 @@ import { useCart } from "@/contexts/cart-context"
 
 interface CartItem {
   product: {
-    _id: string
+    id: number
     name: string
     price: number
     category: string
@@ -28,11 +28,11 @@ export function CartItemComponent({ item }: CartItemProps) {
   const { updateQuantity, removeItem } = useCart()
 
   const handleQuantityChange = (newQuantity: number) => {
-    updateQuantity(item.product._id, newQuantity)
+    updateQuantity(item.product.id, newQuantity)
   }
 
   const handleRemove = () => {
-    removeItem(item.product._id)
+    removeItem(item.product.id)
   }
 
   return (

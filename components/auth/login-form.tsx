@@ -12,9 +12,10 @@ import { useToast } from "@/hooks/use-toast"
 
 interface LoginFormProps {
   onToggleMode: () => void
+  onSuccess?: () => void
 }
 
-export function LoginForm({ onToggleMode }: LoginFormProps) {
+export function LoginForm({ onToggleMode, onSuccess }: LoginFormProps) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -31,6 +32,7 @@ export function LoginForm({ onToggleMode }: LoginFormProps) {
         title: "Welcome back!",
         description: "You have been successfully logged in.",
       })
+      onSuccess?.()
     } catch (error) {
       toast({
         title: "Login failed",

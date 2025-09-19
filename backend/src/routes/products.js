@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { z } from "zod"
-import Product from "../models/Product.js"
+import pool from "../db/connection.js"
 
 const router = Router()
 
@@ -21,54 +21,66 @@ router.get("/", async (req, res, next) => {
   try {
     const query = productQuerySchema.parse(req.query)
     
-    // Build filter object
-    const filter = {}
-    
+    // Build WHERE clause
+    let whereClause = "WHERE 1=1"
+    const params = []
+    let paramCount = 0
+
     // Search filter
     if (query.search) {
-      filter.name = { $regex: query.search, $options: "i" }
+      paramCount++
+      whereClause += ` AND name ILIKE $${paramCount}`
+      params.push(`%${query.search}%`)
     }
-    
+
     // Category filter
     if (query.category && query.category !== "All") {
-      filter.category = query.category
+      paramCount++
+      whereClause += ` AND category = $${paramCount}`
+      params.push(query.category)
     }
-    
+
     // Price range filter
-    if (query.minPrice !== undefined || query.maxPrice !== undefined) {
-      filter.price = {}
-      if (query.minPrice !== undefined) {
-        filter.price.$gte = query.minPrice
-      }
-      if (query.maxPrice !== undefined) {
-        filter.price.$lte = query.maxPrice
-      }
+    if (query.minPrice !== undefined) {
+      paramCount++
+      whereClause += ` AND price >= $${paramCount}`
+      params.push(query.minPrice)
     }
-    
-    // Build sort object
-    const sort = {}
-    sort[query.sort] = query.order === "asc" ? 1 : -1
-    
-    // Calculate pagination
-    const skip = (query.page - 1) * query.limit
-    
-    // Execute query with pagination
-    const [products, total] = await Promise.all([
-      Product.find(filter)
-        .sort(sort)
-        .skip(skip)
-        .limit(query.limit)
-        .lean(),
-      Product.countDocuments(filter)
-    ])
-    
+    if (query.maxPrice !== undefined) {
+      paramCount++
+      whereClause += ` AND price <= $${paramCount}`
+      params.push(query.maxPrice)
+    }
+
+    // Sorting
+    const sortDirection = query.order === "asc" ? "ASC" : "DESC"
+    const sortColumn = query.sort === "createdAt" ? "created_at" : query.sort
+
+    // Pagination
+    const offset = (query.page - 1) * query.limit
+
+    // Get total count
+    const countQuery = `SELECT COUNT(*) FROM products ${whereClause}`
+    const countResult = await pool.query(countQuery, params)
+    const total = parseInt(countResult.rows[0].count)
+
+    // Get products
+    const productsQuery = `
+      SELECT * FROM products 
+      ${whereClause} 
+      ORDER BY ${sortColumn} ${sortDirection} 
+      LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}
+    `
+    const productsParams = [...params, query.limit, offset]
+    const productsResult = await pool.query(productsQuery, productsParams)
+
     // Calculate pagination info
     const pages = Math.ceil(total / query.limit)
     
     res.json({
       ok: true,
       data: {
-        items: products,
+        items: productsResult.rows,
         total,
         page: query.page,
         pages,
@@ -89,10 +101,12 @@ router.get("/", async (req, res, next) => {
 // GET /api/products/categories - Get all available categories
 router.get("/categories", async (req, res, next) => {
   try {
-    const categories = await Product.distinct("category")
+    const result = await pool.query("SELECT DISTINCT category FROM products ORDER BY category")
+    const categories = result.rows.map(row => row.category)
+    
     res.json({
       ok: true,
-      data: categories.sort()
+      data: categories
     })
   } catch (err) {
     next(err)
@@ -102,9 +116,9 @@ router.get("/categories", async (req, res, next) => {
 // GET /api/products/:id - Get single product by ID
 router.get("/:id", async (req, res, next) => {
   try {
-    const product = await Product.findById(req.params.id).lean()
+    const result = await pool.query("SELECT * FROM products WHERE id = $1", [req.params.id])
     
-    if (!product) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         ok: false,
         error: { message: "Product not found" }
@@ -113,7 +127,7 @@ router.get("/:id", async (req, res, next) => {
     
     res.json({
       ok: true,
-      data: product
+      data: result.rows[0]
     })
   } catch (err) {
     next(err)

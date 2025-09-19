@@ -12,8 +12,7 @@ import "./globals.css"
 
 export const metadata: Metadata = {
   title: "Modern Store - Your Shopping Destination",
-  description: "Discover amazing products with our modern e-commerce platform",
-  generator: "v0.app",
+  description: "Discover amazing products with our modern e-commerce platform"
 }
 
 export default function RootLayout({

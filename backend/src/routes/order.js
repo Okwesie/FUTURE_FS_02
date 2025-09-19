@@ -1,7 +1,6 @@
 import { Router } from "express"
 import { z } from "zod"
-import Product from "../models/Product.js"
-import Order from "../models/Order.js"
+import pool from "../db/connection.js"
 import { authRequired } from "../middleware/auth.js"
 
 const router = Router()
@@ -10,7 +9,7 @@ const router = Router()
 const checkoutSchema = z.object({
   items: z.array(
     z.object({
-      productId: z.string(),
+      productId: z.number().int().positive(),
       qty: z.number().int().positive(),
     }),
   ),
@@ -27,30 +26,40 @@ const checkoutSchema = z.object({
 
 // POST /api/orders/checkout  (auth required)
 router.post("/checkout", authRequired, async (req, res, next) => {
+  const client = await pool.connect()
+  
   try {
+    await client.query('BEGIN')
+    
     const payload = checkoutSchema.parse(req.body)
 
     // Load products and verify stock
     const productIds = payload.items.map((i) => i.productId)
-    const products = await Product.find({ _id: { $in: productIds } })
+    const placeholders = productIds.map((_, index) => `$${index + 1}`).join(',')
+    const productsResult = await client.query(
+      `SELECT * FROM products WHERE id IN (${placeholders})`,
+      productIds
+    )
 
-    if (products.length !== payload.items.length) {
+    if (productsResult.rows.length !== payload.items.length) {
+      await client.query('ROLLBACK')
       return res.status(400).json({ ok: false, error: { message: "Some products not found" } })
     }
 
     // Map for quick lookup
-    const map = Object.fromEntries(products.map((p) => [String(p._id), p]))
+    const map = Object.fromEntries(productsResult.rows.map((p) => [p.id, p]))
 
     // Compute totals & check stock
     let subtotal = 0
     for (const item of payload.items) {
       const p = map[item.productId]
       if (!p || p.stock < item.qty) {
+        await client.query('ROLLBACK')
         return res
           .status(400)
           .json({ ok: false, error: { message: `Insufficient stock for ${p?.name || item.productId}` } })
       }
-      subtotal += p.price * item.qty
+      subtotal += parseFloat(p.price) * item.qty
     }
 
     const taxRate = 0.07 // 7% demo
@@ -60,62 +69,70 @@ router.post("/checkout", authRequired, async (req, res, next) => {
 
     // Compare with clientTotal (allow 1 cent diff due to rounding)
     if (Math.abs(grandTotal - payload.clientTotal) > 0.01) {
+      await client.query('ROLLBACK')
       return res.status(400).json({ ok: false, error: { message: "Total mismatch. Refresh cart and try again." } })
     }
 
-    // Decrement stock atomically within a session
-    const session = await Product.startSession()
-    session.startTransaction()
-    try {
-      for (const item of payload.items) {
-        const p = map[item.productId]
-        p.stock -= item.qty
-        await p.save({ session })
-      }
-
-      const orderItems = payload.items.map((i) => ({
-        productId: map[i.productId]._id,
-        name: map[i.productId].name,
-        price: map[i.productId].price,
-        qty: i.qty,
-      }))
-
-      const order = await Order.create(
-        [
-          {
-            userId: req.user.id,
-            items: orderItems,
-            totals: { subtotal, tax, shipping: shippingFlat, grandTotal, currency: "USD" },
-            shipping: payload.shipping,
-            payment: { method: payload.payment.method, status: "paid", reference: `SIM-${Date.now()}` },
-            status: "paid",
-          },
-        ],
-        { session },
+    // Decrement stock
+    for (const item of payload.items) {
+      const p = map[item.productId]
+      await client.query(
+        'UPDATE products SET stock = stock - $1 WHERE id = $2',
+        [item.qty, item.productId]
       )
-
-      await session.commitTransaction()
-      session.endSession()
-
-      res.status(201).json({ ok: true, data: order[0] })
-    } catch (e) {
-      await session.abortTransaction()
-      session.endSession()
-      throw e
     }
+
+    const orderItems = payload.items.map((i) => ({
+      productId: map[i.productId].id,
+      name: map[i.productId].name,
+      price: parseFloat(map[i.productId].price),
+      qty: i.qty,
+    }))
+
+    // Create order
+    const orderResult = await client.query(
+      `INSERT INTO orders (user_id, status, items, totals, shipping, payment) 
+       VALUES ($1, $2, $3, $4, $5, $6) 
+       RETURNING *`,
+      [
+        req.user.id,
+        'paid',
+        JSON.stringify(orderItems),
+        JSON.stringify({ subtotal, tax, shipping: shippingFlat, grandTotal, currency: "USD" }),
+        JSON.stringify(payload.shipping),
+        JSON.stringify({ method: payload.payment.method, status: "paid", reference: `SIM-${Date.now()}` })
+      ]
+    )
+
+    await client.query('COMMIT')
+    
+    const order = orderResult.rows[0]
+    // JSON fields are already parsed by PostgreSQL
+
+    res.status(201).json({ ok: true, data: order })
   } catch (err) {
+    await client.query('ROLLBACK')
     if (err instanceof z.ZodError) {
       res.status(400)
       return next(new Error(err.errors.map((e) => e.message).join(", ")))
     }
     next(err)
+  } finally {
+    client.release()
   }
 })
 
 // GET /api/orders (auth) -> list current user's orders
 router.get("/", authRequired, async (req, res, next) => {
   try {
-    const orders = await Order.find({ userId: req.user.id }).sort({ createdAt: -1 })
+    const result = await pool.query(
+      "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC",
+      [req.user.id]
+    )
+    
+    // JSON fields are already parsed by PostgreSQL
+    const orders = result.rows
+    
     res.json({ ok: true, data: orders })
   } catch (err) {
     next(err)
@@ -125,8 +142,18 @@ router.get("/", authRequired, async (req, res, next) => {
 // GET /api/orders/:id (auth)
 router.get("/:id", authRequired, async (req, res, next) => {
   try {
-    const order = await Order.findOne({ _id: req.params.id, userId: req.user.id })
-    if (!order) return res.status(404).json({ ok: false, error: { message: "Order not found" } })
+    const result = await pool.query(
+      "SELECT * FROM orders WHERE id = $1 AND user_id = $2",
+      [req.params.id, req.user.id]
+    )
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: { message: "Order not found" } })
+    }
+    
+    const order = result.rows[0]
+    // JSON fields are already parsed by PostgreSQL
+    
     res.json({ ok: true, data: order })
   } catch (err) {
     next(err)

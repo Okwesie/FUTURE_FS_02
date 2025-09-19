@@ -12,9 +12,10 @@ import { useToast } from "@/hooks/use-toast"
 
 interface RegisterFormProps {
   onToggleMode: () => void
+  onSuccess?: () => void
 }
 
-export function RegisterForm({ onToggleMode }: RegisterFormProps) {
+export function RegisterForm({ onToggleMode, onSuccess }: RegisterFormProps) {
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -52,6 +53,7 @@ export function RegisterForm({ onToggleMode }: RegisterFormProps) {
         title: "Account created!",
         description: "Welcome to our store. You can now start shopping.",
       })
+      onSuccess?.()
     } catch (error) {
       toast({
         title: "Registration failed",
